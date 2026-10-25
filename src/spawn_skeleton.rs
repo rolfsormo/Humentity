@@ -293,6 +293,18 @@ pub(crate) fn fit_skeleton_to_shape(
         // (zero-length reference bones are identity), so bake, dynamic, and
         // GPU agree on short bones.
         let reference_rig = rig_spec.reference_rig();
+        let rotation_frames=reference_rig.bone_names.iter().filter_map(|name| {
+            Some(crate::animation::BoneAnimationFrame {
+                entity:*bone_entities.get(name)?,
+                parent:bone_entities.get(reference_rig.bone_parents.get(name)?.as_str()).copied(),
+                reference:*reference_rig.local_bindpose.get(name)?,
+                fitted:*local_bone_transforms.get(name)?,
+                reference_model:reference_rig.model_space_bindpose.get(name)?.rotation,
+                fitted_model:model_space_bindposes.get(name)?.rotation,
+                root:bone_config.bones.get(name)?.parent.is_empty(),
+            })
+        }).collect();
+        commands.entity(entity).insert(crate::animation::BoneRotationFrames(rotation_frames));
         let mut translation_corrections = Vec::new();
         for &bone_name in &reference_rig.bone_names {
             let Some(bone_config_entry) = bone_config.bones.get(bone_name) else {

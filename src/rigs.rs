@@ -13,8 +13,7 @@ use crate::{
     loaders::{ReferenceRigAsset, RigConfigAsset, RigWeightsAsset},
     prelude::*,
     skeleton_lod::{
-        BoneMergeConfig, RigBundle, SkeletonLodConfig, build_lod_data,
-        fit_default_rig_single_toes,
+        BoneMergeConfig, RigBundle, SkeletonLodConfig, build_lod_data, fit_default_rig_single_toes,
     },
 };
 
@@ -366,14 +365,16 @@ pub(crate) fn build_skeleton_scene(
     ds.add(DynamicWorld::from_world(&scene_world))
 }
 
-/// Model-space bind pose with reference rotations restored from the JSON-built rig.
-/// Positions come from each character's helper vertices; rotations use the base
-/// rig's MPFB roll values so morphing cannot change the animation rest frame.
+/// Anatomically fitted model-space bind pose, including each bone's frame.
+/// Both endpoints follow the character's helper vertices; authored MPFB roll
+/// is applied about the fitted bone direction. Animation frame conversion is a
+/// separate responsibility: retaining reference orientations here changes the
+/// physical joint axes and the skin's rest-to-pose transforms.
 ///
 /// `merge_config` is the merge the fitted skeleton belongs to. When it keeps a
 /// single toe per foot ([`BoneMergeConfig::merge_default_rig_toes`]) the kept
 /// toe follows the no-toes clip frame; a full (unmerged) config keeps the
-/// reference rotation for every bone, toe included.
+/// anatomically fitted rotation for every bone, toe included.
 pub(crate) fn fitted_model_space_bindposes(
     helpers: &[Vec3],
     rig: &RigSpec,
@@ -385,11 +386,9 @@ pub(crate) fn fitted_model_space_bindposes(
         let bone_config = rig.config.bones.get(bone_name).unwrap_or_else(|| {
             panic!("reference rig bone '{bone_name}' has no MPFB rig JSON configuration")
         });
-        let head_position = get_bone_position(&bone_config.head, vertex_groups, helpers);
-        let reference_rotation = rig.reference_rig.model_space_bindpose[bone_name].rotation;
         model_space_bindposes.insert(
             bone_name,
-            Transform::from_translation(head_position).with_rotation(reference_rotation),
+            get_bone_transform(bone_name, bone_config, vertex_groups, helpers),
         );
     }
     fit_default_rig_single_toes(
@@ -427,12 +426,9 @@ pub(crate) fn bone_transform_from_endpoints(
     // MPFB roll angles are defined in Blender's Z-up frame. Align the local
     // bone Y axis using the Blender-frame direction, apply roll there, and
     // convert the resulting frame to the Y-up MakeHuman model coordinates.
-    let blender_bone_direction =
-        BLENDER_TO_MAKEHUMAN_MODEL_ROTATION.inverse() * bone_direction;
-    let align_blender_local_y_to_bone =
-        Quat::from_rotation_arc(Vec3::Y, blender_bone_direction);
-    let blender_bone_rotation =
-        align_blender_local_y_to_bone * Quat::from_rotation_y(roll_radians);
+    let blender_bone_direction = BLENDER_TO_MAKEHUMAN_MODEL_ROTATION.inverse() * bone_direction;
+    let align_blender_local_y_to_bone = Quat::from_rotation_arc(Vec3::Y, blender_bone_direction);
+    let blender_bone_rotation = align_blender_local_y_to_bone * Quat::from_rotation_y(roll_radians);
     let model_bone_rotation =
         (BLENDER_TO_MAKEHUMAN_MODEL_ROTATION * blender_bone_rotation).normalize();
     Transform::from_translation(head_position).with_rotation(model_bone_rotation)
@@ -443,7 +439,30 @@ fn get_bone_position(
     vertex_groups: &AHashMap<String, Vec<[usize; 2]>>,
     helpers: &[Vec3],
 ) -> Vec3 {
-    if bone_position_spec.strategy == "MEAN" {
+    if bone_position_spec.strategy == "WEIGHTED" {
+        let indices = bone_position_spec
+            .vertex_indices
+            .as_ref()
+            .unwrap_or_else(|| panic!("weighted rig anchor has no vertex indices"));
+        let weights = bone_position_spec
+            .vertex_weights
+            .as_ref()
+            .unwrap_or_else(|| panic!("weighted rig anchor has no coefficients"));
+        assert!(
+            !indices.is_empty() && indices.len() == weights.len(),
+            "weighted rig anchor needs matching nonempty indices and coefficients"
+        );
+        let sum: f32 = weights.iter().sum();
+        assert!(
+            weights.iter().all(|weight| weight.is_finite()) && (sum - 1.).abs() < 1e-4,
+            "weighted rig anchor coefficients must be finite and sum to one"
+        );
+        indices
+            .iter()
+            .zip(weights)
+            .map(|(&index, &weight)| helpers[usize::from(index)] * weight)
+            .sum()
+    } else if bone_position_spec.strategy == "MEAN" {
         let helper_vertex_indices = bone_position_spec
             .vertex_indices
             .as_ref()
@@ -454,8 +473,7 @@ fn get_bone_position(
             });
         let (first_helper_vertex_index, second_helper_vertex_index) =
             (helper_vertex_indices[0], helper_vertex_indices[1]);
-        (helpers[second_helper_vertex_index as usize]
-            + helpers[first_helper_vertex_index as usize])
+        (helpers[second_helper_vertex_index as usize] + helpers[first_helper_vertex_index as usize])
             / 2.0
     } else if bone_position_spec.strategy == "CUBE" {
         let vertex_group_name = bone_position_spec.cube_name.as_ref().unwrap_or_else(|| {
@@ -486,9 +504,49 @@ fn get_bone_position(
         helpers[helper_vertex_index as usize]
     } else {
         unimplemented!(
-            "rig config bone has unrecognized strategy '{}': expected MEAN, CUBE, or VERTEX (check the rig config asset)",
+            "rig config bone has unrecognized strategy '{}': expected WEIGHTED, MEAN, CUBE, or VERTEX (check the rig config asset)",
             bone_position_spec.strategy
         )
+    }
+}
+
+#[cfg(test)]
+fn assert_rotation_axes(actual: Quat, expected: Quat) {
+    // Compare the represented frame directly. acos(dot(q, q)) can report a
+    // nonzero angle for equal f32 rotations after normalization rounding.
+    for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+        let error = (actual * axis).distance(expected * axis);
+        assert!(
+            error < 1e-6,
+            "rotation axis {axis:?}: error={error}, actual={actual:?}, expected={expected:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod weighted_anchor_tests {
+    use super::*;
+
+    #[test]
+    fn surface_anchor_preserves_affine_motion_with_signed_coefficients() {
+        let spec = BoneTransformSpec {
+            cube_name: None,
+            strategy: "WEIGHTED".to_owned(),
+            vertex_indices: Some(vec![0, 1, 2]),
+            vertex_weights: Some(vec![-0.25, 0.5, 0.75]),
+            vertex_index: None,
+        };
+        let points = [Vec3::X, Vec3::Y, Vec3::Z];
+        let anchor = get_bone_position(&spec, &AHashMap::default(), &points);
+        assert_eq!(anchor, Vec3::new(-0.25, 0.5, 0.75));
+        let deform = Mat4::from_scale_rotation_translation(
+            Vec3::new(0.7, 1.2, 0.9),
+            Quat::from_euler(EulerRot::XYZ, 0.3, -0.8, 0.5),
+            Vec3::new(2., -1., 4.),
+        );
+        let shaped = points.map(|point| deform.transform_point3(point));
+        let actual = get_bone_position(&spec, &AHashMap::default(), &shaped);
+        assert!(actual.distance(deform.transform_point3(anchor)) < 1e-6);
     }
 }
 
@@ -542,9 +600,7 @@ mod default_rig_toe_average_tests {
         let kept_toe_rotation = model_space["toe1-1.L"].rotation;
         let expected_roll_fix =
             Quat::from_array([-0.0412228, -0.8170496, -0.0755843, 0.5701033]).normalize();
-        for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
-            assert!((kept_toe_rotation * axis).distance(expected_roll_fix * axis) < 1e-6);
-        }
+        super::assert_rotation_axes(kept_toe_rotation, expected_roll_fix);
     }
 
     #[test]
@@ -616,6 +672,7 @@ mod full_toe_shape_fit_tests {
             cube_name: None,
             strategy: "VERTEX".to_string(),
             vertex_indices: None,
+            vertex_weights: None,
             vertex_index: Some(vertex_index),
         }
     }
@@ -678,12 +735,10 @@ mod full_toe_shape_fit_tests {
             merged_toe_rotation.angle_between(reference_toe_rotation) > 1.0,
             "merged kept toe must carry the no-toes twist, got {merged_toe_rotation:?}"
         );
-        let expected_toe_rotation =
-            (reference_toe_rotation * Quat::from_array([-0.0412228, -0.8170496, -0.0755843, 0.5701033]))
-                .normalize();
-        for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
-            assert!((merged_toe_rotation * axis).distance(expected_toe_rotation * axis) < 1e-6);
-        }
+        let expected_toe_rotation = (reference_toe_rotation
+            * Quat::from_array([-0.0412228, -0.8170496, -0.0755843, 0.5701033]))
+        .normalize();
+        super::assert_rotation_axes(merged_toe_rotation, expected_toe_rotation);
         // Only the kept toe changes frame; its parent foot is untouched.
         assert!(
             fitted_model_space["foot.L"]

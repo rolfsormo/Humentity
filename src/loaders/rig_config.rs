@@ -13,6 +13,9 @@ pub struct BoneTransformSpec {
     pub cube_name: Option<String>,
     pub strategy: String,
     pub vertex_indices: Option<Vec<u16>>,
+    /// Affine surface-anchor coefficients, paired with `vertex_indices`.
+    /// Unlike skin weights these may be negative: the joint lies inside skin.
+    pub vertex_weights: Option<Vec<f32>>,
     pub vertex_index: Option<u16>,
 }
 

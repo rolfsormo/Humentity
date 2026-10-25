@@ -154,6 +154,7 @@ mod tests {
             cube_name: None,
             strategy: "VERTEX".to_string(),
             vertex_indices: None,
+            vertex_weights: None,
             vertex_index: Some(vertex_index),
         }
     }

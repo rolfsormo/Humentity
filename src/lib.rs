@@ -62,7 +62,7 @@ pub mod prelude {
             CharacterShapeConfigLoader, CharacterTemplateAssetLoader, CompositeTarget,
             CompositeTargetsAsset, MacroBounds, MacroDataAsset, MacroDataAssetLoader, MhcloAsset,
             MhcloAssetLoader, ObjVertsAsset, ObjVertsAssetLoader, ObjVertsSettings, OppositesAsset,
-            ReferenceRigAsset, RigConfigAsset, RigConfigAssetLoader,
+            MhcloVertexMap, ReferenceRigAsset, RigConfigAsset, RigConfigAssetLoader,
             RigWeightsAsset, RigWeightsAssetLoader, RotationOnlyAnimationAsset,
             RotationOnlyAnimationAssetLoader, RotationOnlyAnimationSettings, ShapeBakeRequest,
             ShapeBakedAnimationAsset, ShapeBakedAnimationAssetLoader, ShapeBakedAnimationSettings,
@@ -269,6 +269,11 @@ impl Plugin for HumentityPlugin {
             .add_systems(
                 PostUpdate,
                 (
+                    animation::prepare_rotation_frames
+                        .before(bevy::app::AnimationSystems),
+                    animation::apply_rotation_frames
+                        .in_set(animation::HumentitySkeletonSystemSet)
+                        .after(bevy::app::AnimationSystems),
                     animation::rescale_root_bone_translation
                         .in_set(animation::HumentitySkeletonSystemSet)
                         .after(bevy::app::AnimationSystems),
