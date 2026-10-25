@@ -2,6 +2,7 @@ mod animation;
 mod assets;
 mod basemesh;
 mod bone_debug;
+mod bounds;
 pub mod gpu;
 pub(crate) mod helpers;
 mod loaders;
@@ -172,6 +173,7 @@ pub struct HumentityPlugin;
 
 impl Plugin for HumentityPlugin {
     fn build(&self, app: &mut App) {
+        bounds::install(app);
         if !app.is_plugin_added::<ObjPlugin>() {
             app.add_plugins(ObjPlugin);
         }
