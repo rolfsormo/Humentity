@@ -1,5 +1,8 @@
 # Humentity
 
+This maintenance branch targets Bevy0.20 and the CPU character pipeline.
+See [runtime scope and dependency decisions](KIDE-MAINTENANCE.md).
+
 A Bevy plugin for loading, morphing, rigging, and animating MakeHuman-based 3D humanoid characters at runtime.
 
 ![Screenshot](https://i.imghippo.com/files/eVWiu1727317384.png)
