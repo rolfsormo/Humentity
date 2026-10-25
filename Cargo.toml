@@ -5,7 +5,10 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-bevy = "0.20.0"
+bevy = { version = "0.20.0", default-features = false, features = [
+    "common_api", "bevy_asset", "bevy_scene", "bevy_animation", "bevy_gltf",
+    "bevy_render", "bevy_pbr", "bevy_gizmos", "bevy_gizmos_render", "bevy_log",
+] }
 ahash = { version = ">=0.8.12", features = ["serde"] }
 serde = { version = ">=1.0.228", features = ["derive"] }
 walkdir = ">=2.5.0"
