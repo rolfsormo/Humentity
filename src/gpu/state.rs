@@ -249,7 +249,8 @@ pub(super) fn update_instance_clocks(
         ));
     }
     if let Some(mut buffer) = buffers.get_mut(&handles.instance_data) {
-        buffer.data = Some(bytemuck::cast_slice(flat).to_vec());
+        buffer.clear();
+        buffer.extend_from_slice(flat);
     }
     // Shape weights ride a separate buffer: one SHAPE_CAP row per instance,
     // same semantics as the entity's morph weights. Active rows pad out.
@@ -265,7 +266,8 @@ pub(super) fn update_instance_clocks(
         }
     }
     if let Some(mut buffer) = buffers.get_mut(&handles.shape_weights) {
-        buffer.data = Some(bytemuck::cast_slice(shape_flat).to_vec());
+        buffer.clear();
+        buffer.extend_from_slice(shape_flat);
     }
     // Root scales ride their own buffer: one float per instance.
     let root_flat = &mut scratch.root_scales;
@@ -275,6 +277,7 @@ pub(super) fn update_instance_clocks(
         root_flat.push(anims.root_scales.get(i).copied().unwrap_or(1.0));
     }
     if let Some(mut buffer) = buffers.get_mut(&handles.root_scales) {
-        buffer.data = Some(bytemuck::cast_slice(root_flat).to_vec());
+        buffer.clear();
+        buffer.extend_from_slice(root_flat);
     }
 }

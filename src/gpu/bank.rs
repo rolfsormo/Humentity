@@ -254,6 +254,7 @@ impl Default for GpuBakeJobs {
 }
 
 #[derive(Resource, Clone, ExtractResource)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct GpuRenderHandles {
     pub parents: Handle<ShaderBuffer>,
     pub frames: Handle<ShaderBuffer>,

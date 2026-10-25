@@ -542,10 +542,9 @@ mod default_rig_toe_average_tests {
         let kept_toe_rotation = model_space["toe1-1.L"].rotation;
         let expected_roll_fix =
             Quat::from_array([-0.0412228, -0.8170496, -0.0755843, 0.5701033]).normalize();
-        assert!(
-            kept_toe_rotation.angle_between(expected_roll_fix) < 1e-4,
-            "kept toe must carry the no-toes roll fix, got {kept_toe_rotation:?}"
-        );
+        for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+            assert!((kept_toe_rotation * axis).distance(expected_roll_fix * axis) < 1e-6);
+        }
     }
 
     #[test]
@@ -682,10 +681,9 @@ mod full_toe_shape_fit_tests {
         let expected_toe_rotation =
             (reference_toe_rotation * Quat::from_array([-0.0412228, -0.8170496, -0.0755843, 0.5701033]))
                 .normalize();
-        assert!(
-            merged_toe_rotation.angle_between(expected_toe_rotation) < 1e-6,
-            "merged kept toe must be the reference rotation times the twist fix"
-        );
+        for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+            assert!((merged_toe_rotation * axis).distance(expected_toe_rotation * axis) < 1e-6);
+        }
         // Only the kept toe changes frame; its parent foot is untouched.
         assert!(
             fitted_model_space["foot.L"]

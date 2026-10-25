@@ -223,11 +223,11 @@ pub(super) fn bake_gpu_animation(
     let (offsets, counts, durations, modes) = bank.tables();
 
     let parents_handle = buffers.add(ShaderBuffer::new(
-        bytemuck::cast_slice(&parents),
+        parents.clone(),
         RenderAssetUsages::RENDER_WORLD,
     ));
     let frames_handle = buffers.add(ShaderBuffer::new(
-        bytemuck::cast_slice(&seed),
+        seed.clone(),
         RenderAssetUsages::RENDER_WORLD,
     ));
     let inv_bind: Vec<Mat4> = bank
@@ -236,7 +236,7 @@ pub(super) fn bake_gpu_animation(
         .map(|bone| reference.model_space_bindpose[bone].to_matrix().inverse())
         .collect();
     let inv_bind_handle = buffers.add(ShaderBuffer::new(
-        bytemuck::cast_slice(&inv_bind),
+        inv_bind.clone(),
         RenderAssetUsages::RENDER_WORLD,
     ));
     // Shape slices: slice 0 is the reference skeleton (translations mirror the
@@ -254,36 +254,34 @@ pub(super) fn bake_gpu_animation(
         })
         .collect();
     let shape_translations_handle = buffers.add(ShaderBuffer::new(
-        bytemuck::cast_slice(&reference_translations),
+        reference_translations,
         RenderAssetUsages::RENDER_WORLD,
     ));
-    let shape_inv_binds_handle = buffers.add(ShaderBuffer::new(
-        bytemuck::cast_slice(&inv_bind),
-        RenderAssetUsages::RENDER_WORLD,
-    ));
+    let shape_inv_binds_handle =
+        buffers.add(ShaderBuffer::new(inv_bind, RenderAssetUsages::RENDER_WORLD));
     // Dynamic-retarget corrections, slice 0 (reference): length ratios of 1.0
     // and identity direction quats, so the shader passes clip offsets through
     // untouched for the reference shape. `upload_shape_buffers` appends one
     // fitted slice per registered shape.
     let reference_ratios = vec![1.0f32; binds.len()];
     let shape_ratios_handle = buffers.add(ShaderBuffer::new(
-        bytemuck::cast_slice(&reference_ratios),
+        reference_ratios,
         RenderAssetUsages::RENDER_WORLD,
     ));
     let reference_direction_adjust = vec![Vec4::new(0.0, 0.0, 0.0, 1.0); binds.len()];
     let shape_direction_adjust_handle = buffers.add(ShaderBuffer::new(
-        bytemuck::cast_slice(&reference_direction_adjust),
+        reference_direction_adjust,
         RenderAssetUsages::RENDER_WORLD,
     ));
     let joints_handle = buffers.add(ShaderBuffer::new(
-        bytemuck::cast_slice(&joints_data),
+        joints_data.clone(),
         RenderAssetUsages::RENDER_WORLD,
     ));
     // Skeleton-root rearward Z shift (default rig only): published into the
     // pose uniforms so the GPU crowd sits on the capsule like CPU characters.
     let root_z_offset = skeleton_rear_offset_meters(&reference.rig_name);
     let uniforms_handle = buffers.add(ShaderBuffer::new(
-        &pose_uniform_bytes(
+        pose_uniform_bytes(
             num_bones,
             instances,
             offsets.clone(),
@@ -292,7 +290,8 @@ pub(super) fn bake_gpu_animation(
             modes.clone(),
             1,
             root_z_offset,
-        ),
+        )
+        .to_vec(),
         RenderAssetUsages::RENDER_WORLD,
     ));
     // Per instance: blend_slots weights + clocks + bank indices, padded to
@@ -308,25 +307,25 @@ pub(super) fn bake_gpu_animation(
         instance_floats.extend_from_slice(&[0.0; BLEND_CAP]);
     }
     let instance_data_handle = buffers.add(ShaderBuffer::new(
-        bytemuck::cast_slice(&instance_floats),
+        instance_floats.clone(),
         RenderAssetUsages::RENDER_WORLD,
     ));
     // Per instance: one shape-ceiling weight row (zeros = reference).
     let shape_weight_floats = vec![0.0f32; config.instances * SHAPE_CAP];
     let shape_weights_handle = buffers.add(ShaderBuffer::new(
-        bytemuck::cast_slice(&shape_weight_floats),
+        shape_weight_floats,
         RenderAssetUsages::RENDER_WORLD,
     ));
     // Per instance: one root-bone Y scale (1.0 = reference proportions).
     let root_scale_floats = vec![1.0f32; config.instances];
     let root_scales_handle = buffers.add(ShaderBuffer::new(
-        bytemuck::cast_slice(&root_scale_floats),
+        root_scale_floats,
         RenderAssetUsages::RENDER_WORLD,
     ));
     // Reference root bind-pose Y (local == model space: the root has no
     // parent). The shader measures clip-Y deltas from this.
     let root_bind_handle = buffers.add(ShaderBuffer::new(
-        bytemuck::cast_slice(&[binds[0].translation.y]),
+        vec![binds[0].translation.y],
         RenderAssetUsages::RENDER_WORLD,
     ));
     commands.insert_resource(GpuRenderHandles {
@@ -554,22 +553,21 @@ pub(super) fn collect_clip_bakes(
         handles.durations = durations.clone();
         handles.modes = modes.clone();
         if let Some(mut frames) = buffers.get_mut(&handles.frames) {
-            frames.data = Some(bytemuck::cast_slice(&bank.frames).to_vec());
+            frames.clear();
+            frames.extend_from_slice(&bank.frames);
         }
         if let Some(mut uniforms) = buffers.get_mut(&handles.uniforms) {
-            uniforms.data = Some(
-                pose_uniform_bytes(
-                    handles.num_bones,
-                    handles.instance_count,
-                    offsets,
-                    counts,
-                    durations,
-                    modes,
-                    handles.shape_count,
-                    handles.root_z_offset,
-                )
-                .to_vec(),
-            );
+            uniforms.clear();
+            uniforms.extend_from_slice(&pose_uniform_bytes(
+                handles.num_bones,
+                handles.instance_count,
+                offsets,
+                counts,
+                durations,
+                modes,
+                handles.shape_count,
+                handles.root_z_offset,
+            ));
         }
     }
 }
@@ -660,16 +658,20 @@ pub(super) fn upload_shape_buffers(
         direction_adjust.extend_from_slice(&shape.translation_direction_adjust);
     }
     if let Some(mut buffer) = buffers.get_mut(&handles.shape_translations) {
-        buffer.data = Some(bytemuck::cast_slice(&translations).to_vec());
+        buffer.clear();
+        buffer.extend_from_slice(&translations);
     }
     if let Some(mut buffer) = buffers.get_mut(&handles.shape_inv_binds) {
-        buffer.data = Some(bytemuck::cast_slice(&inv_binds).to_vec());
+        buffer.clear();
+        buffer.extend_from_slice(&inv_binds);
     }
     if let Some(mut buffer) = buffers.get_mut(&handles.shape_ratios) {
-        buffer.data = Some(bytemuck::cast_slice(&ratios).to_vec());
+        buffer.clear();
+        buffer.extend_from_slice(&ratios);
     }
     if let Some(mut buffer) = buffers.get_mut(&handles.shape_direction_adjust) {
-        buffer.data = Some(bytemuck::cast_slice(&direction_adjust).to_vec());
+        buffer.clear();
+        buffer.extend_from_slice(&direction_adjust);
     }
     handles.shape_count = shapes.shapes.len() as u32 + 1;
     // Publish the new shape count so the pose shader can clamp shape indices
@@ -681,19 +683,17 @@ pub(super) fn upload_shape_buffers(
         handles.modes.clone(),
     );
     if let Some(mut uniforms) = buffers.get_mut(&handles.uniforms) {
-        uniforms.data = Some(
-            pose_uniform_bytes(
-                handles.num_bones,
-                handles.instance_count,
-                offsets,
-                counts,
-                durations,
-                modes,
-                handles.shape_count,
-                handles.root_z_offset,
-            )
-            .to_vec(),
-        );
+        uniforms.clear();
+        uniforms.extend_from_slice(&pose_uniform_bytes(
+            handles.num_bones,
+            handles.instance_count,
+            offsets,
+            counts,
+            durations,
+            modes,
+            handles.shape_count,
+            handles.root_z_offset,
+        ));
     }
     *uploaded = shapes.version;
     info!(

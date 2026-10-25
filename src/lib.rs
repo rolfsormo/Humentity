@@ -31,11 +31,6 @@ pub mod prelude {
         ColliderOffset, DisablePhysics, RagdollCollisionLayers, RagdollJointLimit,
         RagdollJointLimitOverrides, default_joint_limit, resolve_joint_limit,
     };
-    #[cfg(feature = "jolt")]
-    pub use crate::physics::jolt::{
-        BoneForCollider, CharacterColliders, CharacterRagdoll, ColliderForCharacter,
-        ColliderOffset, RagdollCollisionLayers, RagdollStateChanged,
-    };
     pub use crate::physics::{
         COLLIDERS, ColliderBone, HumentityRagdollSystemSet, RagdollDamping, RagdollDensity,
         RagdollMobility, get_collider_parent,
@@ -321,37 +316,6 @@ impl Plugin for HumentityPlugin {
                 .add_observer(physics::avian::on_teardown_character)
                 .add_observer(physics::avian::on_refit_character)
                 .add_observer(physics::avian::on_disable_physics);
-        }
-
-        #[cfg(feature = "jolt")]
-        {
-            use bevy::app::AnimationSystems;
-
-            app.register_type::<RagdollDensity>()
-                .register_type::<RagdollDamping>()
-                .add_systems(
-                    Update,
-                    (
-                        physics::jolt::sync_colliders,
-                        physics::jolt::mark_needs_colliders
-                            .after(spawn_skeleton::check_skeleton_ready),
-                        physics::jolt::spawn_colliders
-                            .after(physics::jolt::mark_needs_colliders)
-                            .after(spawn_skeleton::check_skeleton_ready),
-                        physics::jolt::set_ragdoll_state.in_set(HumentityRagdollSystemSet),
-                        physics::jolt::tag_ragdoll_parts,
-                    ),
-                )
-                .add_systems(FixedUpdate, physics::jolt::ensure_kinematic_targets)
-                .add_systems(
-                    PostUpdate,
-                    physics::jolt::sync_bones_to_ragdoll
-                        .in_set(animation::HumentitySkeletonSystemSet)
-                        .after(AnimationSystems)
-                        .before(TransformSystems::Propagate),
-                )
-                .add_observer(physics::jolt::on_teardown_character)
-                .add_observer(physics::jolt::on_refit_character);
         }
 
         #[cfg(feature = "boxddd")]
