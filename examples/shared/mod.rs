@@ -26,12 +26,11 @@ use humentity::prelude::*;
 pub fn default_skeleton_lods() -> Vec<BoneMergeConfig> {
     // Merge toe bones into a single posable toe per foot
     let lod0 = BoneMergeConfig::full();
-    // if you author clips on the default rig with toes (like idle.glb), then don't use the below fn.
-    // if you used the no toes rig, then you will want to call this fn.
-    //.merge_default_rig_toes();
+        // if you author clips on the default rig with toes (like idle.glb), then don't use the below fn.
+        // if you used the no toes rig, then you will want to call this fn.
+        //.merge_default_rig_toes();
 
-    let lod1 = lod0
-        .clone()
+    let lod1 = lod0.clone()
         .without_children_of(&["foot.L"])
         .without_children_of(&["foot.R"])
         .without_children_of(&["head"]);

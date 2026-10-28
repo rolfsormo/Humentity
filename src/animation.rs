@@ -61,31 +61,18 @@ pub(crate) struct BoneAnimationFrame {
 /// animation channels. This prevents frame conversion accumulating on channels
 /// absent from an active clip or on a previous frame's solved pose.
 pub(crate) fn prepare_rotation_frames(
-    characters: Query<
-        (
-            &BoneRotationFrames,
-            &AnimationPlayer,
-            Has<DynamicRetargeting>,
-        ),
-        Or<(With<RootOnlyRetargeting>, With<DynamicRetargeting>)>,
-    >,
+    characters: Query<(&BoneRotationFrames,&AnimationPlayer,Has<DynamicRetargeting>), Or<(With<RootOnlyRetargeting>,With<DynamicRetargeting>)>>,
     mut bones: Query<&mut Transform>,
 ) {
-    for (frames, player, dynamic) in &characters {
-        if player.playing_animations().next().is_none() {
-            continue;
-        }
+    for (frames,player,dynamic) in &characters {
+        if player.playing_animations().next().is_none() {continue;}
         for frame in &frames.0 {
-            if let Ok(mut transform) = bones.get_mut(frame.entity) {
-                transform.rotation = frame.reference.rotation;
+            if let Ok(mut transform)=bones.get_mut(frame.entity) {
+                transform.rotation=frame.reference.rotation;
                 // Unwritten channels must not retain the prior fitted output:
                 // retargeting it again accumulates translation/scale errors.
-                transform.translation = if frame.root || dynamic {
-                    frame.reference.translation
-                } else {
-                    frame.fitted.translation
-                };
-                transform.scale = frame.reference.scale;
+                transform.translation=if frame.root||dynamic {frame.reference.translation}else{frame.fitted.translation};
+                transform.scale=frame.reference.scale;
             }
         }
     }
@@ -96,34 +83,22 @@ pub(crate) fn prepare_rotation_frames(
 /// The cache follows the validated parent-first reference hierarchy. Source
 /// model rotations are reconstructed before each local output replaces them.
 pub(crate) fn apply_rotation_frames(
-    characters: Query<
-        (&BoneRotationFrames, &AnimationPlayer),
-        Or<(With<RootOnlyRetargeting>, With<DynamicRetargeting>)>,
-    >,
+    characters: Query<(&BoneRotationFrames,&AnimationPlayer), Or<(With<RootOnlyRetargeting>,With<DynamicRetargeting>)>>,
     mut bones: Query<&mut Transform>,
 ) {
-    for (frames, player) in &characters {
-        if player.playing_animations().next().is_none() {
-            continue;
-        }
-        let mut source_model = AHashMap::with_capacity(frames.0.len());
-        let mut solved_model = AHashMap::with_capacity(frames.0.len());
+    for (frames,player) in &characters {
+        if player.playing_animations().next().is_none() {continue;}
+        let mut source_model=AHashMap::with_capacity(frames.0.len());
+        let mut solved_model=AHashMap::with_capacity(frames.0.len());
         for frame in &frames.0 {
-            if let Ok(mut transform) = bones.get_mut(frame.entity) {
-                let source_parent = frame
-                    .parent
-                    .and_then(|parent| source_model.get(&parent).copied())
-                    .unwrap_or(Quat::IDENTITY);
-                let target_parent = frame
-                    .parent
-                    .and_then(|parent| solved_model.get(&parent).copied())
-                    .unwrap_or(Quat::IDENTITY);
-                let source = (source_parent * transform.rotation).normalize();
-                let target =
-                    (source * frame.reference_model.conjugate() * frame.fitted_model).normalize();
-                transform.rotation = (target_parent.conjugate() * target).normalize();
-                source_model.insert(frame.entity, source);
-                solved_model.insert(frame.entity, target);
+            if let Ok(mut transform)=bones.get_mut(frame.entity) {
+                let source_parent=frame.parent.and_then(|parent|source_model.get(&parent).copied()).unwrap_or(Quat::IDENTITY);
+                let target_parent=frame.parent.and_then(|parent|solved_model.get(&parent).copied()).unwrap_or(Quat::IDENTITY);
+                let source=(source_parent*transform.rotation).normalize();
+                let target=(source*frame.reference_model.conjugate()*frame.fitted_model).normalize();
+                transform.rotation=(target_parent.conjugate()*target).normalize();
+                source_model.insert(frame.entity,source);
+                solved_model.insert(frame.entity,target);
             }
         }
     }
@@ -292,7 +267,12 @@ pub(crate) fn bone_translation_correction(
         ),
         _ => (
             reference_local.translation.length(),
-            parent_space_direction_fix(reference_rig, fitted_model_space, bone_name, leaked_parent),
+            parent_space_direction_fix(
+                reference_rig,
+                fitted_model_space,
+                bone_name,
+                leaked_parent,
+            ),
         ),
     };
     if reference_length < 1e-3 {
@@ -481,101 +461,64 @@ mod kept_toe_correction_tests {
     use super::*;
     use crate::loaders::ReferenceRigAsset;
 
-    fn assert_same_rotation(actual: Quat, expected: Quat) {
-        for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
-            assert!((actual * axis).distance(expected * axis) < 1e-5);
+    fn assert_same_rotation(actual:Quat,expected:Quat){
+        for axis in [Vec3::X,Vec3::Y,Vec3::Z]{
+            assert!((actual*axis).distance(expected*axis)<1e-5);
         }
     }
 
     #[test]
-    fn fitted_pelvis_axis_does_not_turn_world_heading_into_lean() {
-        let mut app = App::new();
-        app.add_systems(Update, apply_rotation_frames);
-        let reference = Quat::from_rotation_x(1.2);
-        let fitted = Quat::from_rotation_x(0.8);
-        let heading = Quat::from_rotation_y(1.3);
-        let root = app
-            .world_mut()
-            .spawn(Transform::from_rotation(heading * reference))
-            .id();
-        let mut player = AnimationPlayer::default();
+    fn fitted_pelvis_axis_does_not_turn_world_heading_into_lean(){
+        let mut app=App::new();
+        app.add_systems(Update,apply_rotation_frames);
+        let reference=Quat::from_rotation_x(1.2);
+        let fitted=Quat::from_rotation_x(0.8);
+        let heading=Quat::from_rotation_y(1.3);
+        let root=app.world_mut().spawn(Transform::from_rotation(heading*reference)).id();
+        let mut player=AnimationPlayer::default();
         player.play(bevy::animation::graph::AnimationNodeIndex::new(0));
-        app.world_mut().spawn((
-            RootOnlyRetargeting,
-            player,
-            BoneRotationFrames(vec![BoneAnimationFrame {
-                entity: root,
-                parent: None,
-                reference: Transform::from_rotation(reference),
-                fitted: Transform::from_rotation(fitted),
-                reference_model: reference,
-                fitted_model: fitted,
-                root: true,
-            }]),
-        ));
+        app.world_mut().spawn((RootOnlyRetargeting,player,BoneRotationFrames(vec![BoneAnimationFrame{
+            entity:root,parent:None,reference:Transform::from_rotation(reference),
+            fitted:Transform::from_rotation(fitted),reference_model:reference,fitted_model:fitted,root:true,
+        }])));
         app.update();
-        assert_same_rotation(
-            app.world().get::<Transform>(root).unwrap().rotation,
-            heading * fitted,
-        );
+        assert_same_rotation(app.world().get::<Transform>(root).unwrap().rotation,heading*fitted);
     }
 
     #[test]
-    fn model_transfer_preserves_parent_chain_and_distinct_toe_rest_axes() {
-        let mut app = App::new();
-        app.add_systems(Update, apply_rotation_frames);
-        let reference = Quat::from_rotation_x(0.7);
-        let fitted = Quat::from_rotation_x(0.3);
-        let heading = Quat::from_rotation_y(1.1);
-        let curl = Quat::from_rotation_z(0.4);
-        let root = app
-            .world_mut()
-            .spawn(Transform::from_rotation(heading * reference))
-            .id();
-        let mut frames = vec![BoneAnimationFrame {
-            entity: root,
-            parent: None,
-            reference: Transform::from_rotation(reference),
-            fitted: Transform::from_rotation(fitted),
-            reference_model: reference,
-            fitted_model: fitted,
-            root: true,
+    fn model_transfer_preserves_parent_chain_and_distinct_toe_rest_axes(){
+        let mut app=App::new();
+        app.add_systems(Update,apply_rotation_frames);
+        let reference=Quat::from_rotation_x(0.7);
+        let fitted=Quat::from_rotation_x(0.3);
+        let heading=Quat::from_rotation_y(1.1);
+        let curl=Quat::from_rotation_z(0.4);
+        let root=app.world_mut().spawn(Transform::from_rotation(heading*reference)).id();
+        let mut frames=vec![BoneAnimationFrame{
+            entity:root,parent:None,reference:Transform::from_rotation(reference),
+            fitted:Transform::from_rotation(fitted),reference_model:reference,fitted_model:fitted,root:true,
         }];
-        let mut expected = Vec::new();
-        for roll in [-0.6, -0.2, 0., 0.3, 0.7] {
-            let reference_local = Quat::from_rotation_y(roll);
-            let fitted_local = Quat::from_rotation_y(roll * 0.8);
-            let reference_model = reference * reference_local;
-            let fitted_model = fitted * fitted_local;
-            let source = heading * curl * reference_model;
-            let entity = app
-                .world_mut()
-                .spawn(Transform::from_rotation(
-                    (heading * reference).conjugate() * source,
-                ))
-                .id();
-            frames.push(BoneAnimationFrame {
-                entity,
-                parent: Some(root),
-                reference: Transform::from_rotation(reference_local),
-                fitted: Transform::from_rotation(fitted_local),
-                reference_model,
-                fitted_model,
-                root: false,
+        let mut expected=Vec::new();
+        for roll in [-0.6,-0.2,0.,0.3,0.7]{
+            let reference_local=Quat::from_rotation_y(roll);
+            let fitted_local=Quat::from_rotation_y(roll*0.8);
+            let reference_model=reference*reference_local;
+            let fitted_model=fitted*fitted_local;
+            let source=heading*curl*reference_model;
+            let entity=app.world_mut().spawn(Transform::from_rotation((heading*reference).conjugate()*source)).id();
+            frames.push(BoneAnimationFrame{
+                entity,parent:Some(root),reference:Transform::from_rotation(reference_local),
+                fitted:Transform::from_rotation(fitted_local),reference_model,fitted_model,root:false,
             });
-            expected.push((entity, heading * curl * fitted_model));
+            expected.push((entity,heading*curl*fitted_model));
         }
-        let mut player = AnimationPlayer::default();
+        let mut player=AnimationPlayer::default();
         player.play(bevy::animation::graph::AnimationNodeIndex::new(0));
-        app.world_mut()
-            .spawn((RootOnlyRetargeting, player, BoneRotationFrames(frames)));
+        app.world_mut().spawn((RootOnlyRetargeting,player,BoneRotationFrames(frames)));
         app.update();
-        let parent = app.world().get::<Transform>(root).unwrap().rotation;
-        for (entity, expected) in expected {
-            assert_same_rotation(
-                parent * app.world().get::<Transform>(entity).unwrap().rotation,
-                expected,
-            );
+        let parent=app.world().get::<Transform>(root).unwrap().rotation;
+        for(entity,expected)in expected{
+            assert_same_rotation(parent*app.world().get::<Transform>(entity).unwrap().rotation,expected);
         }
     }
 
