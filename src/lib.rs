@@ -62,8 +62,8 @@ pub mod prelude {
             BoneJsonConfig, BoneTransformSpec, CategoryMorphsAsset, CharacterShapeAsset,
             CharacterShapeConfigLoader, CharacterTemplateAssetLoader, CompositeTarget,
             CompositeTargetsAsset, MacroBounds, MacroDataAsset, MacroDataAssetLoader, MhcloAsset,
-            MhcloAssetLoader, ObjVertsAsset, ObjVertsAssetLoader, ObjVertsSettings, OppositesAsset,
-            MhcloVertexMap, ReferenceRigAsset, RigConfigAsset, RigConfigAssetLoader,
+            MhcloAssetLoader, MhcloVertexMap, ObjVertsAsset, ObjVertsAssetLoader, ObjVertsSettings,
+            OppositesAsset, ReferenceRigAsset, RigConfigAsset, RigConfigAssetLoader,
             RigWeightsAsset, RigWeightsAssetLoader, RotationOnlyAnimationAsset,
             RotationOnlyAnimationAssetLoader, RotationOnlyAnimationSettings, ShapeBakeRequest,
             ShapeBakedAnimationAsset, ShapeBakedAnimationAssetLoader, ShapeBakedAnimationSettings,
@@ -271,8 +271,7 @@ impl Plugin for HumentityPlugin {
             .add_systems(
                 PostUpdate,
                 (
-                    animation::prepare_rotation_frames
-                        .before(bevy::app::AnimationSystems),
+                    animation::prepare_rotation_frames.before(bevy::app::AnimationSystems),
                     animation::apply_rotation_frames
                         .in_set(animation::HumentitySkeletonSystemSet)
                         .after(bevy::app::AnimationSystems),
@@ -343,8 +342,7 @@ impl Plugin for HumentityPlugin {
                         physics::boxddd::set_ragdoll_state.in_set(HumentityRagdollSystemSet),
                         physics::boxddd::apply_damping,
                         physics::boxddd::spawn_joints.after(physics::boxddd::spawn_colliders),
-                        physics::boxddd::create_native_joints
-                            .after(physics::boxddd::spawn_joints),
+                        physics::boxddd::create_native_joints.after(physics::boxddd::spawn_joints),
                     ),
                 )
                 .add_systems(

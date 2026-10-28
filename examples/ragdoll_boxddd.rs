@@ -22,24 +22,24 @@ fn main() {
     let mut app = setup_app();
 
     app
-    //.insert_resource(BoxdddDebugDrawSettings {
-    //    enabled: true,
-    //    options: boxddd::DebugDrawOptions::default(),
-    //})
-    .add_plugins((BoxdddPhysicsPlugin::new(boxddd::FoundationConfig::default()),))
-    .add_systems(Startup, (floor, spawn_ui))
-    .add_observer(nudge_on_ragdoll_full)
-    .add_systems(
-        Update,
-        (
-            add_human.run_if(resource_exists::<HumentityAssetsReady>),
-            toggle,
-            setup_graph,
-            start_clip,
-            bevy_boxddd::draw_debug_gizmos,
-        ),
-    )
-    .run();
+        //.insert_resource(BoxdddDebugDrawSettings {
+        //    enabled: true,
+        //    options: boxddd::DebugDrawOptions::default(),
+        //})
+        .add_plugins((BoxdddPhysicsPlugin::new(boxddd::FoundationConfig::default()),))
+        .add_systems(Startup, (floor, spawn_ui))
+        .add_observer(nudge_on_ragdoll_full)
+        .add_systems(
+            Update,
+            (
+                add_human.run_if(resource_exists::<HumentityAssetsReady>),
+                toggle,
+                setup_graph,
+                start_clip,
+                bevy_boxddd::draw_debug_gizmos,
+            ),
+        )
+        .run();
 }
 
 #[derive(Component)]
@@ -170,7 +170,6 @@ fn nudge_on_ragdoll_full(
 fn boxddd_vec3(bevy_vector: Vec3) -> boxddd::Vec3 {
     boxddd::Vec3::new(bevy_vector.x, bevy_vector.y, bevy_vector.z)
 }
-
 
 fn spawn_ui(mut commands: Commands) {
     commands.spawn((

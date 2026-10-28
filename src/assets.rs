@@ -59,6 +59,27 @@ pub fn shape_mesh_from_helpers_mhclo(
     mhid_lookup: &[u16],
     bevy_vertex_map: &AHashMap<u16, Vec<u16>>,
 ) -> Mesh {
+    shape_mesh_from_helpers_mhclo_scaled(
+        mesh,
+        mhclo,
+        helpers,
+        helpers,
+        mhid_lookup,
+        bevy_vertex_map,
+    )
+}
+
+/// Fit a proxy to `helpers`, scaling its vertex offsets by the reference
+/// distances measured on `scale_helpers`.
+pub fn shape_mesh_from_helpers_mhclo_scaled(
+    mesh: &Mesh,
+    mhclo: &MhcloAsset,
+    helpers: &[Vec3],
+    scale_helpers: &[Vec3],
+    mhid_lookup: &[u16],
+    bevy_vertex_map: &AHashMap<u16, Vec<u16>>,
+) -> Mesh {
+    let offset_scale = mhclo.get_offset_scale_mhclo(scale_helpers);
     let mut vertices = get_vertex_positions(mesh);
     for (vert, mh_asset_vertex) in mhid_lookup.iter().enumerate() {
         let hm = &mhclo.helper_map[*mh_asset_vertex as usize];
@@ -79,7 +100,7 @@ pub fn shape_mesh_from_helpers_mhclo(
                         position += *mh_helper_position * wt;
                     }
                 }
-                let offset = mhclo.get_offset_scale_mhclo(helpers) * helper_offset;
+                let offset = offset_scale * helper_offset;
                 vertices[vert] = position + offset;
             }
         }
@@ -98,6 +119,78 @@ pub fn shape_mesh_from_helpers_mhclo(
     .with_generated_tangents()
     .expect("tangent generation failed on the morphed proxy mesh: degenerate triangles after morphing (check extreme morph weights)");
     fix_normals(&mut mesh, bevy_vertex_map);
+    mesh
+}
+
+/// Fit one template shape onto `base`, the proxy fitted to the base mesh.
+///
+/// A motion shape (`keep_proxy_scale`) adds only its motion: both its fit and
+/// a reference fit to the base mesh use the first shape's offset scale, and
+/// their difference is applied to `base`.
+#[allow(clippy::too_many_arguments)] // Fitting inputs come from the build call sites unchanged.
+fn fit_template_shape(
+    base: &Mesh,
+    mhclo: &MhcloAsset,
+    shape: &CharacterMorphShape,
+    helpers: &[Vec3],
+    first_helpers: &[Vec3],
+    basemesh: &[Vec3],
+    mhid_lookup: &[u16],
+    bevy_vertex_map: &AHashMap<u16, Vec<u16>>,
+) -> Mesh {
+    if !shape.keep_proxy_scale {
+        return shape_mesh_from_helpers_mhclo(base, mhclo, helpers, mhid_lookup, bevy_vertex_map);
+    }
+    let fit = |helpers: &[Vec3]| {
+        shape_mesh_from_helpers_mhclo_scaled(
+            base,
+            mhclo,
+            helpers,
+            first_helpers,
+            mhid_lookup,
+            bevy_vertex_map,
+        )
+    };
+    let reference = fit(basemesh);
+    let moved = fit(helpers);
+    let shift = |base: Vec<Vec3>, moved: Vec<Vec3>, reference: Vec<Vec3>| {
+        base.into_iter()
+            .zip(moved.into_iter().zip(reference))
+            .map(|(base, (moved, reference))| base + moved - reference)
+            .collect::<Vec<_>>()
+    };
+    let positions = shift(
+        get_vertex_positions(base),
+        get_vertex_positions(&moved),
+        get_vertex_positions(&reference),
+    );
+    let normals = shift(
+        get_vertex_normals(base),
+        get_vertex_normals(&moved),
+        get_vertex_normals(&reference),
+    );
+    let Some(bevy::mesh::VertexAttributeValues::Float32x4(base_tangents)) =
+        base.attribute(Mesh::ATTRIBUTE_TANGENT)
+    else {
+        panic!("the base proxy mesh has no tangents: fitted proxies always generate them");
+    };
+    let tangent_shift = shift(
+        base_tangents
+            .iter()
+            .map(|t| Vec3::new(t[0], t[1], t[2]))
+            .collect(),
+        get_vertex_tangents(&moved).expect("fitted proxies always have tangents"),
+        get_vertex_tangents(&reference).expect("fitted proxies always have tangents"),
+    );
+    let tangents = tangent_shift
+        .into_iter()
+        .zip(base_tangents)
+        .map(|(t, base)| [t.x, t.y, t.z, base[3]])
+        .collect::<Vec<_>>();
+    let mut mesh = base.clone();
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, tangents);
     mesh
 }
 
@@ -120,11 +213,21 @@ pub(crate) fn build_final_mesh_mhclo(
         shape_mesh_from_helpers_mhclo(input_mesh, mhclo, &basemesh, &mhid_lookup, &vertex_map);
 
     let mut meshes = vec![];
+    let mut first_helpers = None;
     for shape in template.shapes.iter() {
         let helpers = adjust_helpers_to_morphs(&shape.morphs, &mh_morphs, &basemesh)
             .unwrap_or_else(|e| panic!("mesh build for template shape '{}': {e} (check the shape's morph names against the morph targets and manifest)", shape.name));
-        let mesh =
-            shape_mesh_from_helpers_mhclo(&input_mesh, mhclo, &helpers, &mhid_lookup, &vertex_map);
+        let first = first_helpers.get_or_insert_with(|| helpers.clone());
+        let mesh = fit_template_shape(
+            &input_mesh,
+            mhclo,
+            shape,
+            &helpers,
+            first,
+            &basemesh,
+            &mhid_lookup,
+            &vertex_map,
+        );
         meshes.push(mesh);
     }
 
@@ -205,13 +308,18 @@ pub(crate) fn build_final_meshes_mhclo(
     for (i_mesh, mesh) in input_meshes.iter().enumerate() {
         let template = &templates[i_mesh];
         let mut mesh_shapes = vec![];
+        let mut first_helpers = None;
         for mesh_shape in template.shapes.iter() {
             let helpers = adjust_helpers_to_morphs(&mesh_shape.morphs, &mh_morphs, &basemesh)
                 .unwrap_or_else(|e| panic!("stitched mesh {i_mesh} shape '{}': {e} (check the shape's morph names against the morph targets and manifest)", mesh_shape.name));
-            mesh_shapes.push(Some(shape_mesh_from_helpers_mhclo(
+            let first = first_helpers.get_or_insert_with(|| helpers.clone());
+            mesh_shapes.push(Some(fit_template_shape(
                 mesh,
                 &mhclos[i_mesh],
+                mesh_shape,
                 &helpers,
+                first,
+                &basemesh,
                 &mhid_lookup[i_mesh],
                 &vertex_map[i_mesh],
             )));

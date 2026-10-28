@@ -27,6 +27,15 @@ pub struct CharacterMorphShape {
     pub name: &'static str,
     pub morphs: MorphTargets,
     pub helper_deltas: Option<Vec<TargetDelta>>,
+    /// Fit proxies (clothes, teeth, brows…) for this shape with the template's
+    /// first shape's offset scale, adding only the shape's motion.
+    ///
+    /// Proxies scale their offsets by distances between reference vertices.
+    /// A motion shape such as a jaw opening changes those distances (upper to
+    /// lower teeth), which would resize the proxy instead of moving it. Body
+    /// shapes leave this off; motion shapes layered on the first (body)
+    /// shape turn it on.
+    pub keep_proxy_scale: bool,
 }
 
 impl CharacterMorphShape {
@@ -35,6 +44,16 @@ impl CharacterMorphShape {
             name: NAME_INTERNER.intern(name.as_ref()).leak(),
             morphs,
             helper_deltas: None,
+            keep_proxy_scale: false,
+        }
+    }
+
+    /// A motion shape: proxies keep the first shape's scale (see
+    /// [`Self::keep_proxy_scale`]).
+    pub fn motion(name: impl AsRef<str>, morphs: MorphTargets) -> Self {
+        Self {
+            keep_proxy_scale: true,
+            ..Self::new(name, morphs)
         }
     }
 }
@@ -44,11 +63,12 @@ impl Serialize for CharacterMorphShape {
     where
         S: Serializer,
     {
-        // Serialize as a map with "name" and "morphs"
+        // Serialize as a map with "name", "morphs" and "keep_proxy_scale"
         let mut state: <S as Serializer>::SerializeStruct =
-            serializer.serialize_struct("CharacterShapeArchetype", 2)?;
+            serializer.serialize_struct("CharacterShapeArchetype", 3)?;
         state.serialize_field("name", self.name)?;
         state.serialize_field("morphs", &self.morphs)?;
+        state.serialize_field("keep_proxy_scale", &self.keep_proxy_scale)?;
         state.end()
     }
 }
@@ -62,6 +82,8 @@ impl<'de> Deserialize<'de> for CharacterMorphShape {
         struct Tmp {
             name: String,
             morphs: MorphTargets,
+            #[serde(default)]
+            keep_proxy_scale: bool,
         }
 
         let tmp = Tmp::deserialize(deserializer)?;
@@ -72,6 +94,7 @@ impl<'de> Deserialize<'de> for CharacterMorphShape {
             name,
             morphs: tmp.morphs,
             helper_deltas: None,
+            keep_proxy_scale: tmp.keep_proxy_scale,
         })
     }
 }

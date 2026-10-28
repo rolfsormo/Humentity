@@ -318,27 +318,67 @@ mod skin_weight_tests {
 
     #[test]
     fn spare_lanes_preserve_one_two_and_three_influence_blends() {
-        for source in [vec![0.7], vec![0.5,0.5],vec![0.5,0.3,0.2],vec![0.4,0.3,0.2,0.1]] {
-            let names=["a","b","c","d"];
-            let rig=source.iter().enumerate().map(|(index,&weight)|
-                (names[index],AHashMap::from_iter([(0,weight)]))).collect();
-            let mut mesh=Mesh::new(PrimitiveTopology::TriangleList,RenderAssetUsages::MAIN_WORLD);
+        for source in [
+            vec![0.7],
+            vec![0.5, 0.5],
+            vec![0.5, 0.3, 0.2],
+            vec![0.4, 0.3, 0.2, 0.1],
+        ] {
+            let names = ["a", "b", "c", "d"];
+            let rig = source
+                .iter()
+                .enumerate()
+                .map(|(index, &weight)| (names[index], AHashMap::from_iter([(0, weight)])))
+                .collect();
+            let mut mesh = Mesh::new(
+                PrimitiveTopology::TriangleList,
+                RenderAssetUsages::MAIN_WORLD,
+            );
             // Duplicate render vertices share one source vertex (e.g. UV seam).
-            set_asset_rig_arrays(&mut mesh,&[0,0],&[MhcloVertexMap::SingleVertex(0)],&names,&rig);
-            let Some(VertexAttributeValues::Uint16x4(indices))=mesh.attribute(Mesh::ATTRIBUTE_JOINT_INDEX) else {panic!("joint indices");};
-            let Some(VertexAttributeValues::Float32x4(weights))=mesh.attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT) else {panic!("joint weights");};
-            assert_eq!(indices[0],indices[1]);
-            assert_eq!(weights[0],weights[1]);
-            let total: f32=source.iter().sum();
-            for (bone,&weight) in source.iter().enumerate() {
-                let actual: f32=indices[0].iter().zip(weights[0]).filter(|(index,_)|usize::from(**index)==bone)
-                    .map(|(_,weight)|weight).sum();
-                assert!((actual-weight/total).abs()<1e-6,"source={source:?} bone={bone} actual={actual}");
+            set_asset_rig_arrays(
+                &mut mesh,
+                &[0, 0],
+                &[MhcloVertexMap::SingleVertex(0)],
+                &names,
+                &rig,
+            );
+            let Some(VertexAttributeValues::Uint16x4(indices)) =
+                mesh.attribute(Mesh::ATTRIBUTE_JOINT_INDEX)
+            else {
+                panic!("joint indices");
+            };
+            let Some(VertexAttributeValues::Float32x4(weights)) =
+                mesh.attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT)
+            else {
+                panic!("joint weights");
+            };
+            assert_eq!(indices[0], indices[1]);
+            assert_eq!(weights[0], weights[1]);
+            let total: f32 = source.iter().sum();
+            for (bone, &weight) in source.iter().enumerate() {
+                let actual: f32 = indices[0]
+                    .iter()
+                    .zip(weights[0])
+                    .filter(|(index, _)| usize::from(**index) == bone)
+                    .map(|(_, weight)| weight)
+                    .sum();
+                assert!(
+                    (actual - weight / total).abs() < 1e-6,
+                    "source={source:?} bone={bone} actual={actual}"
+                );
             }
             // Weighted translation is a direct observable of linear skinning.
-            let actual: f32=indices[0].iter().zip(weights[0]).map(|(joint,weight)|f32::from(*joint)*weight).sum();
-            let expected: f32=source.iter().enumerate().map(|(index,weight)|index as f32*weight/total).sum();
-            assert!((actual-expected).abs()<1e-6);
+            let actual: f32 = indices[0]
+                .iter()
+                .zip(weights[0])
+                .map(|(joint, weight)| f32::from(*joint) * weight)
+                .sum();
+            let expected: f32 = source
+                .iter()
+                .enumerate()
+                .map(|(index, weight)| index as f32 * weight / total)
+                .sum();
+            assert!((actual - expected).abs() < 1e-6);
         }
     }
 }
