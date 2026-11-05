@@ -126,7 +126,9 @@ pub fn shape_mesh_from_helpers_mhclo_scaled(
 ///
 /// A motion shape (`keep_proxy_scale`) adds only its motion: both its fit and
 /// a reference fit to the base mesh use the first shape's offset scale, and
-/// their difference is applied to `base`.
+/// their difference is applied to `base`. The reference depends only on the
+/// base mesh and that scale, so it is fitted once into `reference` and shared
+/// by every motion shape of the template.
 #[allow(clippy::too_many_arguments)] // Fitting inputs come from the build call sites unchanged.
 fn fit_template_shape(
     base: &Mesh,
@@ -135,6 +137,7 @@ fn fit_template_shape(
     helpers: &[Vec3],
     first_helpers: &[Vec3],
     basemesh: &[Vec3],
+    reference: &mut Option<Mesh>,
     mhid_lookup: &[u16],
     bevy_vertex_map: &AHashMap<u16, Vec<u16>>,
 ) -> Mesh {
@@ -151,7 +154,7 @@ fn fit_template_shape(
             bevy_vertex_map,
         )
     };
-    let reference = fit(basemesh);
+    let reference = &*reference.get_or_insert_with(|| fit(basemesh));
     let moved = fit(helpers);
     let shift = |base: Vec<Vec3>, moved: Vec<Vec3>, reference: Vec<Vec3>| {
         base.into_iter()
@@ -162,12 +165,12 @@ fn fit_template_shape(
     let positions = shift(
         get_vertex_positions(base),
         get_vertex_positions(&moved),
-        get_vertex_positions(&reference),
+        get_vertex_positions(reference),
     );
     let normals = shift(
         get_vertex_normals(base),
         get_vertex_normals(&moved),
-        get_vertex_normals(&reference),
+        get_vertex_normals(reference),
     );
     let Some(bevy::mesh::VertexAttributeValues::Float32x4(base_tangents)) =
         base.attribute(Mesh::ATTRIBUTE_TANGENT)
@@ -180,7 +183,7 @@ fn fit_template_shape(
             .map(|t| Vec3::new(t[0], t[1], t[2]))
             .collect(),
         get_vertex_tangents(&moved).expect("fitted proxies always have tangents"),
-        get_vertex_tangents(&reference).expect("fitted proxies always have tangents"),
+        get_vertex_tangents(reference).expect("fitted proxies always have tangents"),
     );
     let tangents = tangent_shift
         .into_iter()
@@ -208,6 +211,7 @@ fn fit_template_shapes(
     context: &str,
 ) -> Vec<Mesh> {
     let mut first_helpers = None;
+    let mut reference = None;
     template
         .shapes
         .iter()
@@ -222,6 +226,7 @@ fn fit_template_shapes(
                 &helpers,
                 first,
                 basemesh,
+                &mut reference,
                 mhid_lookup,
                 vertex_map,
             )
