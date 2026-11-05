@@ -194,6 +194,41 @@ fn fit_template_shape(
     mesh
 }
 
+/// Fit `base`, the proxy already fitted to the base mesh, to every shape of
+/// `template`, in order. `context` names the build in error messages.
+#[allow(clippy::too_many_arguments)] // Fitting inputs come from the build call sites unchanged.
+fn fit_template_shapes(
+    base: &Mesh,
+    mhclo: &MhcloAsset,
+    template: &CharacterTemplate,
+    mh_morphs: &Arc<RwLock<AHashMap<&'static str, TargetAsset>>>,
+    basemesh: &[Vec3],
+    mhid_lookup: &[u16],
+    vertex_map: &AHashMap<u16, Vec<u16>>,
+    context: &str,
+) -> Vec<Mesh> {
+    let mut first_helpers = None;
+    template
+        .shapes
+        .iter()
+        .map(|shape| {
+            let helpers = adjust_helpers_to_morphs(&shape.morphs, mh_morphs, basemesh)
+                .unwrap_or_else(|e| panic!("{context} shape '{}': {e} (check the shape's morph names against the morph targets and manifest)", shape.name));
+            let first = first_helpers.get_or_insert_with(|| helpers.clone());
+            fit_template_shape(
+                base,
+                mhclo,
+                shape,
+                &helpers,
+                first,
+                basemesh,
+                mhid_lookup,
+                vertex_map,
+            )
+        })
+        .collect()
+}
+
 pub(crate) fn build_final_mesh_mhclo(
     mhclo: &MhcloAsset,
     input_mesh: &Mesh,
@@ -212,24 +247,16 @@ pub(crate) fn build_final_mesh_mhclo(
     let mut input_mesh =
         shape_mesh_from_helpers_mhclo(input_mesh, mhclo, &basemesh, &mhid_lookup, &vertex_map);
 
-    let mut meshes = vec![];
-    let mut first_helpers = None;
-    for shape in template.shapes.iter() {
-        let helpers = adjust_helpers_to_morphs(&shape.morphs, &mh_morphs, &basemesh)
-            .unwrap_or_else(|e| panic!("mesh build for template shape '{}': {e} (check the shape's morph names against the morph targets and manifest)", shape.name));
-        let first = first_helpers.get_or_insert_with(|| helpers.clone());
-        let mesh = fit_template_shape(
-            &input_mesh,
-            mhclo,
-            shape,
-            &helpers,
-            first,
-            &basemesh,
-            &mhid_lookup,
-            &vertex_map,
-        );
-        meshes.push(mesh);
-    }
+    let meshes = fit_template_shapes(
+        &input_mesh,
+        mhclo,
+        template,
+        &mh_morphs,
+        &basemesh,
+        &mhid_lookup,
+        &vertex_map,
+        "mesh build",
+    );
 
     let mut morph_names = vec![];
     if !template.shapes.is_empty() {
@@ -307,23 +334,19 @@ pub(crate) fn build_final_meshes_mhclo(
     let mut shape_meshes: AHashMap<(usize, &'static str), Option<Mesh>> = AHashMap::default();
     for (i_mesh, mesh) in input_meshes.iter().enumerate() {
         let template = &templates[i_mesh];
-        let mut mesh_shapes = vec![];
-        let mut first_helpers = None;
-        for mesh_shape in template.shapes.iter() {
-            let helpers = adjust_helpers_to_morphs(&mesh_shape.morphs, &mh_morphs, &basemesh)
-                .unwrap_or_else(|e| panic!("stitched mesh {i_mesh} shape '{}': {e} (check the shape's morph names against the morph targets and manifest)", mesh_shape.name));
-            let first = first_helpers.get_or_insert_with(|| helpers.clone());
-            mesh_shapes.push(Some(fit_template_shape(
-                mesh,
-                &mhclos[i_mesh],
-                mesh_shape,
-                &helpers,
-                first,
-                &basemesh,
-                &mhid_lookup[i_mesh],
-                &vertex_map[i_mesh],
-            )));
-        }
+        let mut mesh_shapes: Vec<Option<Mesh>> = fit_template_shapes(
+            mesh,
+            &mhclos[i_mesh],
+            template,
+            &mh_morphs,
+            &basemesh,
+            &mhid_lookup[i_mesh],
+            &vertex_map[i_mesh],
+            &format!("stitched mesh {i_mesh}"),
+        )
+        .into_iter()
+        .map(Some)
+        .collect();
         let mut tmp_mesh_vec = mesh_shapes
             .iter_mut()
             .filter_map(|m| m.as_mut())
@@ -385,4 +408,186 @@ pub(crate) fn build_final_meshes_mhclo(
     }
 
     (input_meshes.to_vec(), morph_names)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::loaders::{MhcloAssetLoader, ObjVertsAsset, ObjVertsAssetLoader, ObjVertsSettings};
+    use crate::morphs::MorphTargets;
+    use bevy::asset::AssetPlugin;
+
+    /// The proxies the characterisation covers: a body proxy (helpers only) and a
+    /// garment (helper triangles with offsets).
+    const PARTS: [&str; 2] = [
+        "proxymeshes/proxy741/proxy741.proxy",
+        "clothes/underwear/simple_briefs/simple_briefs.mhclo",
+    ];
+
+    struct Part {
+        mhclo: MhcloAsset,
+        mesh: Mesh,
+        verts: ObjVertsAsset,
+    }
+
+    /// Load the base mesh helpers and [`PARTS`] from the crate's assets.
+    fn load() -> (Vec<Vec3>, Vec<Part>) {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            AssetPlugin {
+                file_path: format!("{}/assets", env!("CARGO_MANIFEST_DIR")),
+                ..default()
+            },
+            bevy_obj::ObjPlugin,
+        ))
+        .init_asset::<Mesh>()
+        .init_asset::<ObjVertsAsset>()
+        .register_asset_loader(ObjVertsAssetLoader)
+        .init_asset::<MhcloAsset>()
+        .register_asset_loader(MhcloAssetLoader);
+        let server = app.world().resource::<AssetServer>().clone();
+        let basemesh: Handle<ObjVertsAsset> = server
+            .load_builder()
+            .with_settings(|settings: &mut ObjVertsSettings| settings.is_basemesh_helpers = true)
+            .load("base.obj");
+        let mhclos: Vec<Handle<MhcloAsset>> = PARTS.iter().map(|path| server.load(*path)).collect();
+        let mut objs: Option<Vec<(Handle<Mesh>, Handle<ObjVertsAsset>)>> = None;
+        for _ in 0..10_000 {
+            app.update();
+            let world = app.world();
+            let mhclo_assets = world.resource::<Assets<MhcloAsset>>();
+            if objs.is_none() && mhclos.iter().all(|h| mhclo_assets.contains(h)) {
+                objs = Some(
+                    mhclos
+                        .iter()
+                        .map(|h| {
+                            let obj = mhclo_assets.get(h).expect("loaded").obj_file.clone();
+                            (server.load(obj.clone()), server.load(obj))
+                        })
+                        .collect(),
+                );
+            }
+            let meshes = world.resource::<Assets<Mesh>>();
+            let verts = world.resource::<Assets<ObjVertsAsset>>();
+            if let Some(objs) = &objs
+                && verts.contains(&basemesh)
+                && objs
+                    .iter()
+                    .all(|(mesh, v)| meshes.contains(mesh) && verts.contains(v))
+            {
+                let parts = mhclos
+                    .iter()
+                    .zip(objs)
+                    .map(|(mhclo, (mesh, v))| Part {
+                        mhclo: mhclo_assets.get(mhclo).expect("loaded").clone(),
+                        mesh: meshes.get(mesh).expect("loaded").clone(),
+                        verts: verts.get(v).expect("loaded").clone(),
+                    })
+                    .collect();
+                return (
+                    verts.get(&basemesh).expect("loaded").vertices.clone(),
+                    parts,
+                );
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        panic!("the test assets did not load");
+    }
+
+    /// Two deterministic targets touching every 7th and every 11th base vertex.
+    fn targets(base_len: usize) -> Arc<RwLock<AHashMap<&'static str, TargetAsset>>> {
+        let target = |name: &'static str, every: usize, offset: Vec3| TargetAsset {
+            name,
+            deltas: (0..base_len)
+                .step_by(every)
+                .map(|vertex| TargetDelta {
+                    vertex: u16::try_from(vertex).expect("base mesh vertex fits u16"),
+                    offset: offset * (1.0 + (vertex % 5) as f32 * 0.1),
+                })
+                .collect(),
+        };
+        let mut map = AHashMap::default();
+        map.insert(
+            "test-grow",
+            target("test-grow", 7, Vec3::new(0.0, 0.02, 0.0)),
+        );
+        map.insert(
+            "test-jaw",
+            target("test-jaw", 11, Vec3::new(0.0, -0.01, 0.015)),
+        );
+        Arc::new(RwLock::new(map))
+    }
+
+    fn morphs(values: &[(&'static str, f32)]) -> MorphTargets {
+        let mut morphs = MorphTargets::default();
+        for &(name, value) in values {
+            morphs.insert(name, value);
+        }
+        morphs
+    }
+
+    /// Fold every position, normal and tangent of `mesh` into `hash`, bit for bit.
+    fn fold(hash: &mut u64, mesh: &Mesh) {
+        let mut word = |w: u32| {
+            *hash = (*hash ^ u64::from(w)).wrapping_mul(0x0100_0000_01b3);
+        };
+        for position in get_vertex_positions(mesh) {
+            position.to_array().iter().for_each(|v| word(v.to_bits()));
+        }
+        for normal in get_vertex_normals(mesh) {
+            normal.to_array().iter().for_each(|v| word(v.to_bits()));
+        }
+        let Some(bevy::mesh::VertexAttributeValues::Float32x4(tangents)) =
+            mesh.attribute(Mesh::ATTRIBUTE_TANGENT)
+        else {
+            panic!("fitted meshes carry tangents");
+        };
+        for tangent in tangents {
+            tangent.iter().for_each(|v| word(v.to_bits()));
+        }
+    }
+
+    /// The fitted base and shape meshes of every test part, as one digest. Pins the
+    /// fitting's output so that speeding it up provably changes nothing.
+    #[test]
+    fn fitted_shape_meshes_are_unchanged() {
+        let (basemesh, parts) = load();
+        let mh_morphs = targets(basemesh.len());
+        let template = CharacterTemplate::new([
+            CharacterMorphShape::new("body", morphs(&[("test-grow", 0.8)])),
+            CharacterMorphShape::motion("jaw", morphs(&[("test-grow", 0.8), ("test-jaw", 1.0)])),
+            CharacterMorphShape::motion("jaw-half", morphs(&[("test-jaw", 0.5)])),
+        ]);
+        let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+        for part in &parts {
+            let vertices = get_vertex_positions(&part.mesh);
+            let vertex_map = generate_vertex_map(&part.verts.vertices, &vertices);
+            let mhid_lookup = generate_mhid_lookup(&vertex_map);
+            let base = shape_mesh_from_helpers_mhclo(
+                &part.mesh,
+                &part.mhclo,
+                &basemesh,
+                &mhid_lookup,
+                &vertex_map,
+            );
+            fold(&mut hash, &base);
+            for shape in fit_template_shapes(
+                &base,
+                &part.mhclo,
+                &template,
+                &mh_morphs,
+                &basemesh,
+                &mhid_lookup,
+                &vertex_map,
+                "test",
+            ) {
+                fold(&mut hash, &shape);
+            }
+        }
+        assert_eq!(
+            hash, 0x7df7_60bf_9b36_eb38,
+            "fitted shape digest {hash:#018x}"
+        );
+    }
 }
