@@ -115,10 +115,11 @@ pub fn shape_mesh_from_helpers_mhclo_scaled(
     .with_inserted_indices(mesh.indices().unwrap_or_else(|| {
         panic!("proxy mesh has no index buffer: humentity meshes must be indexed triangle lists (check the proxy .obj)")
     }).clone())
-    .with_computed_area_weighted_normals()
-    .with_generated_tangents()
-    .expect("tangent generation failed on the morphed proxy mesh: degenerate triangles after morphing (check extreme morph weights)");
-    fix_normals(&mut mesh, bevy_vertex_map);
+    .with_computed_area_weighted_normals();
+    // Tangents come from the seam-averaged normals, so they are generated once,
+    // after the averaging.
+    fix_normals(&mut mesh, bevy_vertex_map)
+        .expect("tangent generation failed on the morphed proxy mesh: degenerate triangles after morphing (check extreme morph weights)");
     mesh
 }
 

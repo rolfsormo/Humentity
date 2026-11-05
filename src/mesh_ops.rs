@@ -73,7 +73,12 @@ pub(crate) fn get_uv_coords(mesh: &Mesh) -> Vec<Vec2> {
 /// a smooth surface across the seam but rather 2 distinct surface edges which just
 /// happen to terminate along the same seam, so the normal does not vary smoothly.
 /// Using the mean normal vector for each group of duplicates removes these discontinuities.
-pub fn fix_normals(mesh: &mut Mesh, groups: &AHashMap<u16, Vec<u16>>) {
+/// Tangents are then generated from the averaged normals; the result says whether that
+/// succeeded (it fails on degenerate triangles).
+pub fn fix_normals(
+    mesh: &mut Mesh,
+    groups: &AHashMap<u16, Vec<u16>>,
+) -> Result<(), bevy::mesh::GenerateTangentsError> {
     let mut normals = get_vertex_normals(mesh);
 
     // Average normals per group with duplicates
@@ -95,8 +100,7 @@ pub fn fix_normals(mesh: &mut Mesh, groups: &AHashMap<u16, Vec<u16>>) {
         .collect::<Vec<[f32; 3]>>();
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
 
-    // Regenerate tangents
-    mesh.generate_tangents().ok();
+    mesh.generate_tangents()
 }
 
 pub fn fix_normals_multiple(meshes: &mut [&mut Mesh]) {
